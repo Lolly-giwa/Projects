@@ -1,9 +1,3 @@
----
-title: "ASSESSMENT ON DATA MINNING AND STATISTICAL MODELLING"
-author: "GIWA OLOLADE_30104556"
-date: "2024-01-16"
-output: html_document
----
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
