@@ -1,0 +1,1024 @@
+---
+title: "ASSESSMENT ON DATA MINNING AND STATISTICAL MODELLING"
+author: "GIWA OLOLADE_30104556"
+date: "2024-01-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# TASK A
+## TEXT MINING
+
+```{r install & Load , message = FALSE}
+libraries <- c("tm", "tidytext", "ggplot2", "wordcloud", "syuzhet", "dplyr", "tibble", "textstem", "textdata", "tidyr", "Matrix", "topicmodels", "stringr", "reshape2", "LDAvis", "jsonlite")
+
+#install.packages(libraries) # Comment out after first execution
+#install.packages("topicmodels")
+
+for (lib in libraries) { 
+  library(lib, character.only=TRUE) #Library takes function names without quotes, character only must be used in a loop of this kind.
+}
+```
+
+```{r Load Dataset}
+filepath <- "C:\\AA LOLA USW CLASSES\\DATA MINNING AND STATISTICAL MODELLING\\ASSESSMENT\\MS4S09_CW_Book_Reviews.csv"
+df <- as_tibble(read.csv(filepath, stringsAsFactors = FALSE))# Since we have text data we do not want this read as a factor
+
+# Inspect summary and first few rows of data
+print(summary(df))
+print(head(df))
+```
+
+```{r}
+df <- df[,c(1,4,7,11)] # Select 1, 4, 7, 11 columns
+
+df <- na.omit(df) # Removes all rows containing null values
+
+df$Review_no <- 1:nrow(df) #Add Identifier column to reviews
+```
+
+```{r count_Genre}
+Genre_counts <- count(df,Genre, sort=TRUE) # Count number of reviews by Genre and sort
+head(Genre_counts) # Print top 5 most reviewed Genre
+summary(Genre_counts) # Print summary statistics to see min. max. and average no. of reviews
+```
+
+```{r}
+set.seed(1)
+# Take sample of 10 Genre
+sample_index <- sample(length(unique(df$Genre)), 10) #Sample (Size of population, Size of sample), returns index for sample
+sampled_Genre <- unique(df$Genre)[sample_index]
+
+df <- df %>%
+  filter(Genre %in% sampled_Genre)
+
+print(summary(df))
+head(df)
+```
+
+```{r tokenize}
+word_tokenized_data <- df %>%
+  unnest_tokens(output = word, input = "Review_text", token = "words", to_lower = TRUE) # Tokenize review column by word
+
+bigram_tokenized_data <- df %>%
+  unnest_tokens(output = bigram, input = "Review_text", token = "ngrams", n=2, to_lower = TRUE) # Tokenize review column to bigrams
+```
+
+```{r initial word plot}
+word_counts <- word_tokenized_data %>%
+  count(word, sort = TRUE) # Counts the occurrences of each word and sorts.
+
+ggplot(word_counts[1:10, ], aes(x = reorder(word, n), y = n)) + # Plots first 10 rows of word counts, with word (ordered by n) on the x axis and n on the y axis
+  geom_col(fill = "purple") + # Sets colours of bars to purple
+  labs(x = "Words", y = "Frequency") + # Defines x and y labels
+  coord_flip() + # Flips coordinates so words go on the y axis (for readability)
+  theme_minimal() # Sets theme of visualisation
+```
+```{r Word Cloud}
+set.seed(1)
+wordcloud(words = word_counts$word, freq = word_counts$n, min.freq = 10, random.order=FALSE, random.color=FALSE, colors = sample(colors(), size = 10))
+```
+```{r initial bigram plot}
+bigram_counts <- bigram_tokenized_data %>%
+  count(bigram, sort = TRUE)
+
+ggplot(bigram_counts[1:10, ], aes(x = reorder(bigram, n), y = n)) +
+  geom_col(fill = "blue") +
+  labs(x = "Bigrams", y = "Frequency") +
+  coord_flip() +
+  theme_minimal()
+```
+
+```{r clean data}
+clean_tokens <- word_tokenized_data %>%
+  anti_join(stop_words, by = "word") # Removes stop words
+  
+clean_tokens$word <- gsub("[^a-zA-Z ]", "", clean_tokens$word) %>% # Remove special characters and numbers
+  na_if("") %>% # Replaces empty strings with NA
+  lemmatize_words() # Lemmatizes text
+
+clean_tokens <- na.omit(clean_tokens) # Removes null values
+
+# Text can be untokenized and then retokenized to get cleaned bigrams
+
+untokenized_data <- clean_tokens %>%
+  group_by(Review_no) %>%
+  summarize(clean_review = paste(word, collapse = " ")) %>% # for each review number, takes every word and joins them with spaces
+  inner_join(df[,c(1,2,4,5)], by="Review_no") # Joins cleaned reviews to original df
+
+clean_bigrams <- untokenized_data %>%
+  unnest_tokens(output = bigram, input = "clean_review", token = "ngrams", n=2, to_lower = TRUE) # Tokenize word column to bigrams
+```
+
+```{r clean word plot}
+word_counts <- clean_tokens %>%
+  count(word, sort = TRUE)
+
+top_words <- top_n(word_counts,10,n)$word
+
+filtered_word_counts <- filter(word_counts, word %in% top_words)
+filtered_word_counts$word <- factor(filtered_word_counts$word, levels = top_words[length(top_words):1])
+
+ggplot(filtered_word_counts, aes(x = reorder(word, n), y = n)) +
+  geom_col(fill = "yellow") +
+  labs(x = "Words", y = "Frequency") +
+  coord_flip() +
+  theme_minimal()
+```
+
+
+```{r clean bigram plot}
+bigram_counts <- clean_bigrams %>%
+  count(bigram, sort = TRUE)
+
+top_bigrams <- top_n(bigram_counts,10,n)$bigram
+
+filtered_bigram_counts <- filter(bigram_counts, bigram %in% top_bigrams)
+filtered_bigram_counts$bigram <- factor(filtered_bigram_counts$bigram, levels = top_bigrams[length(top_bigrams):1])
+
+ggplot(filtered_bigram_counts, aes(x = reorder(bigram, n), y = n)) +
+  geom_col(fill = "violet") +
+  labs(x = "Bigrams", y = "Frequency") +
+  coord_flip() +
+  theme_minimal()
+```
+
+
+## Top 10 Words & Bigrams grouped by Genre
+```{r grouped word_plot}
+
+# Grouped Words
+top_words <- top_n(word_counts,10,n)$word # Gets a vector of top 10 words
+
+# Groups clean_tokens by Genre and counts the number of occurences of each word, and filters to only the top 10 words.
+grouped_count <- group_by(clean_tokens, Genre) %>% 
+  count(word) %>%
+  filter(word %in% top_words)
+
+grouped_count$word <- factor(grouped_count$word, levels = top_words[length(top_words):1]) # Orders the top words according to overall frequency
+
+ggplot(data = grouped_count, aes(x = word, y = n, fill = Genre)) + # Fill keyword allows groupings
+  geom_col(position = "dodge") + # position = dodge creates grouped bar chart
+  labs(x = "Words", y = "Frequency", fill = "Genre") +
+  coord_flip() +
+  theme_minimal()
+```
+
+```{r grouped bigram plot}
+# Grouped Bigrams
+top_bigrams <- top_n(bigram_counts,10,n)$bigram
+
+grouped_count <- group_by(clean_bigrams, Genre) %>%
+  count(bigram) %>%
+  filter(bigram %in% top_bigrams)
+
+grouped_count$bigram <- factor(grouped_count$bigram, levels = top_bigrams[length(top_bigrams):1])
+
+ggplot(data = grouped_count, aes(x = bigram, y = n, fill = Genre)) +
+  geom_col(position = "dodge") +
+  labs(x = "Bigrams", y = "Frequency", fill = "Genre") +
+  coord_flip() +
+  theme_minimal()
+```
+
+## Creating Word Cloud
+```{r Clean Word Cloud}
+set.seed(1)
+wordcloud(words = word_counts$word, freq = word_counts$n, min.freq = 10, random.order=FALSE, random.color=FALSE, colors = sample(colors(), size = 10))
+```
+
+
+
+
+# TASK B
+
+## Sentiment Analysis
+```{r bing lexicon}
+bing_sentiments <- get_sentiments("bing") # Loads the bing sentiment lexicon
+
+summary(bing_sentiments)
+print(unique(bing_sentiments$sentiment))
+set.seed(2)
+bing_sentiments[sample(nrow(bing_sentiments), 5),] # Returns sample of 5 rows
+```
+```{r AFINN lexicon}
+afinn_sentiments <- get_sentiments("afinn")
+
+summary(afinn_sentiments)
+print(sort(unique(afinn_sentiments$value)))
+set.seed(1)
+afinn_sentiments[sample(nrow(afinn_sentiments), 5),]
+```
+
+```{r NRC lexicon}
+nrc_sentiments <- get_sentiments("nrc")
+
+summary(nrc_sentiments)
+head(nrc_sentiments)
+print(unique(nrc_sentiments$sentiment))
+set.seed(1)
+nrc_sentiments[sample(nrow(nrc_sentiments), 5),]
+```
+
+```{r applying bing}
+# Create dataset containing only words with associated sentiment & adds sentiment column.
+sentiment_data <- clean_tokens %>%
+  inner_join(get_sentiments("bing"), by = "word") # Joins lexicon to dataset using only words that are in both.
+
+# Calculate Sentiment scores for each review
+sentiment_score <- sentiment_data %>%
+  group_by(Review_no) %>%
+  summarize(bing_sentiment = sum(sentiment == "positive") - sum(sentiment == "negative")) # Calculates sentiment score as sum of number of positive and negative sentiments
+
+# Merge with df
+df_with_sentiment = df %>%
+  inner_join(sentiment_score, by = "Review_no")
+df_with_sentiment
+```
+
+```{r inspect bing worst reviews}
+worst_reviews = df_with_sentiment[order(df_with_sentiment$bing_sentiment)[1],"Review_text"]
+
+for (review in worst_reviews){
+  print(review)
+}
+```
+
+
+```{r inspect bing best reviews}
+best_reviews = df_with_sentiment[order(df_with_sentiment$bing_sentiment, decreasing = TRUE)[1],"Review_text"]
+
+for (review in best_reviews){
+  print(review)
+}
+```
+
+```{r bing visualisations}
+# Histogram of sentiment scores
+ggplot(df_with_sentiment, aes(x = bing_sentiment)) +
+geom_histogram(binwidth = 1, fill = "green", color = "black", alpha = 0.7) +
+theme_minimal()
+
+# Average Sentiment by Genre
+Genre_sentiment <- df_with_sentiment %>%
+  group_by(Genre) %>%
+  summarize(Average_Bing_Sentimet = mean(bing_sentiment))
+
+ggplot(Genre_sentiment, aes(x = reorder(Genre, Average_Bing_Sentimet), y = Average_Bing_Sentimet, fill = Genre)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Average Sentiment Score by Genre", x = "Genre", y = "Average Sentiment Score")
+
+# Box Plot of Sentiment against Genre
+ggplot(df_with_sentiment, aes(x = Genre, y = bing_sentiment)) +
+  geom_boxplot() +
+  labs(title = "Box Plot of Bing Sentiment Score vs. Genre",
+       x = "Genre",
+       y = "Sentiment Score")
+```
+
+## Applying AFINN lexicon
+```{r applying afinn}
+# Create dataset containing only words with associated sentiment & adds sentiment column.
+sentiment_data <- clean_tokens %>%
+  inner_join(get_sentiments("afinn"), by = "word")
+
+# Calculate Sentiment scores for each review
+sentiment_score <- sentiment_data %>%
+  group_by(Review_no) %>%
+  summarize(afinn_sentiment = sum(value))
+
+# Merge with df
+df_with_sentiment = df_with_sentiment %>%
+  inner_join(sentiment_score, by = "Review_no")
+```
+
+```{r inspect afinn worst reviews}
+worst_reviews = df_with_sentiment[order(df_with_sentiment$afinn_sentiment)[1],"Review_text"]
+
+for (review in worst_reviews){
+  print(review)
+}
+```
+
+```{r inspect afinn best reviews}
+best_reviews = df_with_sentiment[order(df_with_sentiment$afinn_sentiment, decreasing = TRUE)[1],"Review_text"]
+
+for (review in best_reviews){
+  print(review)
+}
+```
+
+```{r afinn visualisations}
+# Histogram of sentiment scores
+ggplot(df_with_sentiment, aes(x = afinn_sentiment)) +
+  geom_histogram(binwidth = 1,  fill = "gold", color = "black", alpha = 0.7) +
+  theme_minimal()
+
+# Average Sentiment by Restaurant
+Genre_sentiment <- df_with_sentiment %>%
+  group_by(Genre) %>%
+  summarize(Average_Afinn_Sentiment = mean(afinn_sentiment))
+
+ggplot(Genre_sentiment, aes(x = reorder(Genre, Average_Afinn_Sentiment), y = Average_Afinn_Sentiment, fill = Genre)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Average Sentiment Score by Genre", x = "Genre", y = "Average Sentiment Score")
+
+ggplot(df_with_sentiment, aes(x = factor(Rating), y = afinn_sentiment)) +
+  geom_boxplot() +
+  labs(title = "Box Plot of AFINN Sentiment Score vs. Rating",
+       x = "Rating",
+       y = "Sentiment Score")
+
+# Scatter Plot of Bing vs. AFINN Sentiment
+ggplot(df_with_sentiment, aes(x = bing_sentiment, y = afinn_sentiment)) +
+  geom_point() +
+  labs(title = "Scatter Plot of Bing vs. AFINN Sentiment Scores",
+       x = "Bing Sentiment Score",
+       y = "AFINN Sentiment Score")
+```
+
+```{r applying NRC}
+# Create dataset containing only words with associated sentiment & adds sentiment column.
+emotion_data <- clean_tokens %>%
+  inner_join(get_sentiments("nrc"), by = "word")
+
+# Calculate Sentiment scores for each review
+emotion_count <- emotion_data %>%
+  group_by(Review_no) %>%
+  count(sentiment)
+
+# Pivots data so that there is a column associated with each emotion
+wide_emotion_data <- emotion_count %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = list(n = 0))
+
+# Merge with df
+df_with_sentiment = df_with_sentiment %>%
+  inner_join(wide_emotion_data, by = "Review_no")
+```
+
+
+```{r NRC Visualisations}
+long_df <- df_with_sentiment %>%
+  pivot_longer(cols = c("joy", "positive", "trust", "anticipation", "surprise", "sadness", "negative", "anger", "disgust", "fear"),
+               names_to = "Emotion",
+               values_to = "Intensity")
+
+emotion_scores <- long_df %>%
+  group_by(Genre, Emotion) %>%
+  summarize(avg_intensity = mean(Intensity))
+
+ggplot(emotion_scores, aes(x = Genre, y = Emotion, fill = avg_intensity)) +
+  geom_tile() +  # Creates the heatmap tiles
+  scale_fill_gradient2(low = "green", high = "purple") +  # Adjust colors
+  labs(x = "Genre", y = "Emotion", fill = "Intensity") +
+  theme(axis.text.x = element_text(angle = 30, hjust=1))  # Rotates text to 30 degrees and hjust=1 aligns text to the right
+```
+
+# TASK B CONCLUSION DRAWN FROM FINDINGS 
+
+The analysis draws conclusions from sentiment analysis using different lexicons and also provides insights from reviews.
+
+## Sentiment Analysis Conclusions:
+Bing Lexicon: Words like "Gardening", "Bibles", "English fiction", "Art", "Religion", "Psychology", "Nature", "Technology" and "Engineering" are classified as positive sentiments, while words like "Drama" and "Science fiction" are classified as negative sentiments. suggests that these words are associated with positive sentiments or emotions. This implies that topics related to gardening, literature, art, religion, psychology, nature, and technology are generally perceived positively by the sentiment analysis model based on the Bing Lexicon visualisation.
+
+AFINN Lexicon, the words "Gardening", "Bibles", "English fiction", "Art", "Religion", "Psychology", "Nature", "Technology", and "Engineering" are classified as positive. This suggests that these words are associated with positive sentiments or emotions according to the sentiment scores provided by the AFINN Lexicon visualisation.
+
+NRC Lexicon visualization: words like "Religion", "Drama", "Art", shows a darker intensity on the positive sentiment heatmap, it could suggest that these terms are unexpectedly associated with positive sentiments based on the sentiment lexicon used or the context in which they appear.
+
+## Review Analysis Conclusions:
+Worst Review 1: Critically analyzes Christianity's historical treatment of women, highlighting pervasive misogyny and emphasizing the importance of understanding and addressing gender-based oppression.
+
+Worst Review 2: Contributes to a deeper understanding of infant baptism within Presbyterian and Reformed traditions, addressing contemporary debates and providing practical insights for church practice and pastoral care.
+
+Overall, the analysis provides a comprehensive overview of sentiment analysis results from different lexicons and offers insights from critical reviews, shedding light on various aspects of sentiment and book analysis.
+
+
+
+# TASK C
+
+## TOPIC MODELING 
+
+## Data Selection and Sampling
+```{r Select Data}
+# Select Columns
+df <- df %>% 
+  select(c("Title", "Rating", "Review_text", "Genre")) %>%
+  filter(str_count(Review_text) >= 200 & str_count(Review_text) <= 400)
+
+# Replace values of "unknown in Genre with NA
+df$Genre <- na_if(df$Genre, "unknown")
+
+df <- na.omit(df) # Removes all rows containing null values
+
+df$Review_no <- 1:nrow(df)
+
+if(nrow(df) > 1000) {
+  set.seed(1) # for reproducibility
+  df <- sample_n(df, 1000)
+}
+```
+
+
+
+## Convert data to a clean Term Document Matrix (TDM)
+```{r Create TDM}
+# Convert text column to corpus
+corpus <- VCorpus(VectorSource(df$Review_text))
+
+# Apply cleaning
+corpus <- tm_map(corpus, content_transformer(tolower)) %>%
+  tm_map(content_transformer(function(x) gsub("[^a-zA-Z ]", "", x))) %>%
+  tm_map(removeWords, stopwords("en")) %>%
+  tm_map(stemDocument)
+
+# Convert to a term document matrix
+tdm <- TermDocumentMatrix(corpus, control = list(wordLengths = c(3, 15)))
+
+tdm_matrix <- as.matrix(tdm)
+```
+
+
+## Further Selection of Words
+```{r Word Frequency Distribution}
+term_frequencies <- rowSums(tdm_matrix)
+
+# Create a data frame for plotting
+term_frequency_df <- data.frame(term = names(term_frequencies), frequency = term_frequencies)
+
+# Sort the data frame by frequency in descending order and select the top 10
+top_terms <- term_frequency_df %>%
+  arrange(desc(frequency)) %>%
+  head(10)
+
+# Display the top 10 terms
+print(top_terms)
+
+# Create the histogram
+ggplot(term_frequency_df, aes(x = frequency)) +
+  geom_histogram(binwidth = 1) +
+  labs(title = "Histogram of Term Frequencies",
+       x = "Term Frequency",
+       y = "Number of Terms") +
+  theme_minimal()
+```
+
+
+```{r Word Filtering}
+# Find terms that appear in more than 10% of documents
+frequent_terms <- findFreqTerms(tdm, lowfreq = 0.1 * ncol(tdm_matrix))
+# Find terms that appear in less than 1% of documents
+rare_terms <- findFreqTerms(tdm, highfreq = 0.01 * ncol(tdm_matrix))
+
+print("Frequent Terms")
+print(frequent_terms)
+print("First 20 Infrequent Terms")
+print(rare_terms[1:20])
+
+# Edit list of frequent words to keep useful ones
+to_keep <- c("book", "read", "one")
+
+to_remove <- frequent_terms[!frequent_terms %in% to_keep]
+
+filtered_tdm_matrix <- tdm_matrix[!rownames(tdm_matrix) %in% to_remove, ]
+filtered_tdm_matrix <- filtered_tdm_matrix[!rownames(filtered_tdm_matrix) %in% rare_terms, ]
+
+# Remove 0 sum columns from tdm.
+
+# Calculate column sums
+column_sums <- colSums(filtered_tdm_matrix)
+
+# Identify columns that are all zeros
+zero_columns <- which(column_sums == 0)
+
+# Remove these columns
+if(length(zero_columns) > 0) {
+  # Remove these columns
+  filtered_tdm_matrix <- filtered_tdm_matrix[, -zero_columns]
+} else {
+  # If no columns are all zeros, just use the original matrix
+  print("No zero columns in TDM matrix")
+}
+```
+
+
+```{r Word Frequency Distribution 2}
+term_frequencies <- rowSums(filtered_tdm_matrix)
+
+# Create a data frame for plotting
+term_frequency_df <- data.frame(term = names(term_frequencies), frequency = term_frequencies)
+
+# Sort the data frame by frequency in descending order and select the top 10
+top_terms <- term_frequency_df %>%
+  arrange(desc(frequency)) %>%
+  head(10)
+
+# Display the top 10 terms
+print(top_terms)
+
+# Create the histogram
+ggplot(term_frequency_df, aes(x = frequency)) +
+  geom_histogram(binwidth = 1) +
+  labs(title = "Histogram of Term Frequencies",
+       x = "Term Frequency",
+       y = "Number of Terms") +
+  theme_minimal()
+```
+
+
+
+## Apply LDA
+```{r Initial LDA model}
+dtm <- t(filtered_tdm_matrix)
+lda_model <- LDA(dtm, k = 5)
+```
+
+
+```{r LDA Visualisation}
+topics <- tidy(lda_model, matrix = "beta")
+topics
+
+top_terms <- topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+top_terms %>%
+  ggplot(aes(x =reorder(term, beta), y = beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() 
+```
+
+## Choosing k, Perplexity
+```{r Choosing k}
+range_k <- seq(2, 10, by = 1) # Adjust the range as needed
+perplexities <- sapply(range_k, function(k) {
+  model <- LDA(dtm, k = k, control = list(seed = 1))
+  perplexity(model)
+})
+
+# Plotting perplexities
+plot(range_k, perplexities, type = "b", xlab = "Number of Topics", ylab = "Perplexity")
+```
+
+
+
+## Interactive Principal Componenet Space Visualisation
+```{r pca visualisation}
+set.seed(1)
+lda_model <- LDA(dtm, k = 7)
+
+lda_vis_data <- createJSON(phi = posterior(lda_model)$terms,
+                          theta = posterior(lda_model)$topics,
+                          doc.length = rowSums(as.matrix(dtm)),
+                          vocab = colnames(as.matrix(dtm)),
+                          term.frequency = colSums(as.matrix(dtm)))
+
+serVis(lda_vis_data)
+```
+
+```{r Final LDA Visualisations, fig.width=10, fig.height=8}
+topics <- tidy(lda_model, matrix = "beta")
+
+ggsave("plot.png", width = 10, height = 8)
+
+top_terms <- topics %>%
+  group_by(topic) %>%
+  top_n(6, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+top_terms %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+
+documents <- tidy(lda_model, matrix = "gamma")
+```
+
+# TASK C CONCLUSION DRAWN FROM FINDINGS 
+Based on the findings from the word filtering and topic modeling analysis:
+
+Word Filtering Results:
+
+Frequent Terms: The text frequently mentions words related to biblical themes, books, God, goodness, help, information, interest, life, love, recommendation, study, time, understanding, and usage. These terms suggest that the text discusses topics related to literature, spirituality, guidance, and personal development.
+
+Infrequent Terms: Infrequent terms include words like "abandon," "abuse," "academic," "accident," and "accomplish," indicating less common or specific topics such as challenges, negative experiences, academic pursuits, or achievements.
+
+Conclusion: The analysis provides insights into the themes and topics discussed in the text, indicating a wide range of subjects, including spiritual guidance, personal development, academic pursuits, challenges, and achievements. Further context is needed to draw specific conclusions about the content and purpose of the text.
+
+Topic Modeling Results:
+Initial LDA Visualization: Five topics are identified, suggesting themes related to Enlightenment, Faithfulness, Engagement, Exploration, and Spirituality.
+
+Interactive Principal Component Space Visualization: The Intertopic Distance Map shows circles that are overlapped and are of the same size, it suggests that the topics represented by circles overlapping are closely related or have significant overlap in terms of the words they contain or the concepts they represent. The fact that they are joined indicates a higher similarity between these topics compared to the others. Despite being joined, the equal size of all circles suggests that each topic still has a similar prevalence or importance in the dataset
+
+Final LDA Visualization: Seven topics are identified, including Reading, Education, Exploration, Engagement, Achievement, Understanding, and Creation.
+
+Overall, the analysis reveals a diverse range of topics discussed in the text, encompassing themes related to spirituality, personal growth, education, exploration, and achievement. The findings provide valuable insights into the content and structure of the text, facilitating a deeper understanding of its underlying themes and messages.
+
+
+
+
+# TASK D
+
+# Further Exploration 
+
+```{r}
+#loading required libraries
+library(reticulate) 
+library(spacyr)
+```
+
+```{r}
+#configuration of Python available to the R session
+library(reticulate) 
+py_discover_config()
+```
+
+```{r}
+library(reticulate)
+
+# Import pandas library
+pd <- import("pandas")
+
+# Import numpy library
+np <- import("numpy")
+
+# Import matplotlib.pyplot library
+plt <- import("matplotlib.pyplot")
+
+# Print a message
+print("Hello world")
+```
+
+```{r}
+library(reticulate)
+
+# Set the Python executable path
+Sys.setenv(RETICULATE_PYTHON = "C:\\Users\\DELL\\AppData\\Local\\Programs\\python.exe")
+
+# Import spacy library
+spacy <- import("spacy")
+
+nlp <- spacy$load("en_core_web_sm")
+
+# Example usage
+doc <- nlp("This is an example sentence.")
+```
+
+
+
+## Natural Language Processing (NLP)
+
+## performing Named Entity Recognition (NER) using the spacyr
+```{r}
+library("spacyr")
+#Selected text from Bing Best Reviews
+# Process the text
+corpus <- c("While there are many good books that defend the doctrine of infant baptism from the perspective of covenant theology, there are very few that relate the doctrine of infant baptism to the position of baptized children in the church and their relation to the Lord. This particular question is answered in different ways by Presbyterian and other Reformed churches that practice infant baptism and agree on its overall significance. Recently the Federal Vision debate has reopened this discussion. According to the FV, baptism actually regenerates the infant infallibly. The baptized child is not only presumed to be regenerated by his baptism, he actually is regenerated. He has all spiritual graces in Christ (except the grace of perseverance). There is no difference in the spiritual state of a regenerated child who remains faithful and dies in the Lord and a child who later apostatizes and ends in hell. This view of the FV, a virtual denial of the doctrine of Christian perseverance, has provoked reactions in Presbyterian churches. Most react by saying that grace is conveyed only to the elect in baptism, not to all. The time that that grace is conveyed may be before, during, or after the actual time of baptism. Further, the grace of regeneration may be given to children who are not baptized at all. On these points most traditional Presbyterians agree. However, they are divided over another, related question. What is the spiritual state of baptized children? Assuming that we cannot know certainly the elective decree of God, and we do not know who is actually regenerated and who is not, and we do not believe that baptism infallibly guarantees regeneration to anyone, how are we to regard the baptized children of the church?These questions affect our pastoral practice and the attitudes and actions of parents in our churches. Are the children to be regarded as unsaved, needing conversion, still in the devil's power until we can lead them to a conversion experience? Or, on the other side, are they to be regarded as already regenerated by God, and therefore receptive to the teaching and nurture they receive from their parents and the church? Along the same line, are they members of the church and under its oversight and discipline? Or, are they still outside the church, not subject to its discipline until they join the church by their own profession of faith?It is with these questions that this book provides real help and guidance. Lewis Bevens Schenck (1898-1985) graduated from Princeton Theological Seminary (Th.M.) and from Yale University (Ph.D). For thirty-nine years he served as J. W. Cannon Professor of Bible and Religion at Davidson College in North Carolina. This extensively researched and detailed book is based on his doctoral dissertation at Yale.")
+
+
+entities <- spacy_parse(corpus, dependency = TRUE)
+
+print(entities)
+```
+
+
+
+## Word cloud and Word Frequency Visualisation 
+```{r}
+# Load required libraries
+library(spacyr)
+library(tm)
+library(wordcloud)
+
+# Process the text
+corpus <- c("While there are many good books that defend the doctrine of infant baptism from the perspective of covenant theology, there are very few that relate the doctrine of infant baptism to the position of baptized children in the church and their relation to the Lord. This particular question is answered in different ways by Presbyterian and other Reformed churches that practice infant baptism and agree on its overall significance. Recently the Federal Vision debate has reopened this discussion. According to the FV, baptism actually regenerates the infant infallibly. The baptized child is not only presumed to be regenerated by his baptism, he actually is regenerated. He has all spiritual graces in Christ (except the grace of perseverance). There is no difference in the spiritual state of a regenerated child who remains faithful and dies in the Lord and a child who later apostatizes and ends in hell. This view of the FV, a virtual denial of the doctrine of Christian perseverance, has provoked reactions in Presbyterian churches. Most react by saying that grace is conveyed only to the elect in baptism, not to all. The time that that grace is conveyed may be before, during, or after the actual time of baptism. Further, the grace of regeneration may be given to children who are not baptized at all. On these points most traditional Presbyterians agree. However, they are divided over another, related question. What is the spiritual state of baptized children? Assuming that we cannot know certainly the elective decree of God, and we do not know who is actually regenerated and who is not, and we do not believe that baptism infallibly guarantees regeneration to anyone, how are we to regard the baptized children of the church?These questions affect our pastoral practice and the attitudes and actions of parents in our churches. Are the children to be regarded as unsaved, needing conversion, still in the devil's power until we can lead them to a conversion experience? Or, on the other side, are they to be regarded as already regenerated by God, and therefore receptive to the teaching and nurture they receive from their parents and the church? Along the same line, are they members of the church and under its oversight and discipline? Or, are they still outside the church, not subject to its discipline until they join the church by their own profession of faith?It is with these questions that this book provides real help and guidance. Lewis Bevens Schenck (1898-1985) graduated from Princeton Theological Seminary (Th.M.) and from Yale University (Ph.D). For thirty-nine years he served as J. W. Cannon Professor of Bible and Religion at Davidson College in North Carolina. This extensively researched and detailed book is based on his doctoral dissertation at Yale.")
+
+entities <- spacy_parse(corpus, dependency = TRUE)
+
+# Extract tokens
+tokens <- unlist(entities$lemma)
+
+# Create a document term matrix
+dtm <- DocumentTermMatrix(Corpus(VectorSource(tokens)))
+
+# Convert document term matrix to a matrix
+m <- as.matrix(dtm)
+
+# Get word frequencies
+word_freq <- colSums(m)
+
+# Create a data frame with word frequencies
+word_freq_df <- data.frame(word = names(word_freq), freq = word_freq)
+
+# Sort the data frame by frequency in descending order
+word_freq_df <- word_freq_df[order(-word_freq_df$freq), ]
+
+# Plot word frequency histogram
+hist(word_freq_df$freq, main = "Word Frequency Histogram", xlab = "Frequency", ylab = "Number of Words", col = "skyblue")
+
+# Generate word cloud
+wordcloud(words = word_freq_df$word, freq = word_freq_df$freq, min.freq = 1, max.words = 100, random.order = FALSE, colors = brewer.pal(8, "Dark2"), main = "Word Cloud")
+
+```
+
+
+
+
+## Part-of-Speech Tagging and Dependency Parsing with spaCy.
+```{python}
+import spacy
+
+# Load the English language model
+nlp = spacy.load("en_core_web_sm")
+
+# Process the text
+text = "While there are many good books that defend the doctrine of infant baptism from the perspective of covenant theology, there are very few that relate the doctrine of infant baptism to the position of baptized children in the church and their relation to the Lord. This particular question is answered in different ways by Presbyterian and other Reformed churches that practice infant baptism and agree on its overall significance. Recently the Federal Vision debate has reopened this discussion. According to the FV, baptism actually regenerates the infant infallibly. The baptized child is not only presumed to be regenerated by his baptism, he actually is regenerated. He has all spiritual graces in Christ (except the grace of perseverance). There is no difference in the spiritual state of a regenerated child who remains faithful and dies in the Lord and a child who later apostatizes and ends in hell. This view of the FV, a virtual denial of the doctrine of Christian perseverance, has provoked reactions in Presbyterian churches. Most react by saying that grace is conveyed only to the elect in baptism, not to all. The time that that grace is conveyed may be before, during, or after the actual time of baptism. Further, the grace of regeneration may be given to children who are not baptized at all. On these points most traditional Presbyterians agree. However, they are divided over another, related question. What is the spiritual state of baptized children? Assuming that we cannot know certainly the elective decree of God, and we do not know who is actually regenerated and who is not, and we do not believe that baptism infallibly guarantees regeneration to anyone, how are we to regard the baptized children of the church?These questions affect our pastoral practice and the attitudes and actions of parents in our churches. Are the children to be regarded as unsaved, needing conversion, still in the devil's power until we can lead them to a conversion experience? Or, on the other side, are they to be regarded as already regenerated by God, and therefore receptive to the teaching and nurture they receive from their parents and the church? Along the same line, are they members of the church and under its oversight and discipline? Or, are they still outside the church, not subject to its discipline until they join the church by their own profession of faith?It is with these questions that this book provides real help and guidance. Lewis Bevens Schenck (1898-1985) graduated from Princeton Theological Seminary (Th.M.) and from Yale University (Ph.D). For thirty-nine years he served as J. W. Cannon Professor of Bible and Religion at Davidson College in North Carolina. This extensively researched and detailed book is based on his doctoral dissertation at Yale."
+
+# Define column headers
+
+doc = nlp(text)
+print("{:<15} {:<10} {:<10}".format("Token", "POS", "Dependency"))
+
+# Iterate over tokens and print their text, part-of-speech tags, and dependencies
+for token in doc:
+    print("{:<15} {:<10} {:<10}".format(token.text, token.pos_, token.dep_))
+```
+
+
+
+## Named Entity Recognition with spaCy
+```{python}
+nlp = spacy.load("en_core_web_sm")
+
+doc = nlp("While there are many good books that defend the doctrine of infant baptism from the perspective of covenant theology, there are very few that relate the doctrine of infant baptism to the position of baptized children in the church and their relation to the Lord. This particular question is answered in different ways by Presbyterian and other Reformed churches that practice infant baptism and agree on its overall significance. Recently the Federal Vision debate has reopened this discussion. According to the FV, baptism actually regenerates the infant infallibly. The baptized child is not only presumed to be regenerated by his baptism, he actually is regenerated. He has all spiritual graces in Christ (except the grace of perseverance). There is no difference in the spiritual state of a regenerated child who remains faithful and dies in the Lord and a child who later apostatizes and ends in hell. This view of the FV, a virtual denial of the doctrine of Christian perseverance, has provoked reactions in Presbyterian churches. Most react by saying that grace is conveyed only to the elect in baptism, not to all. The time that that grace is conveyed may be before, during, or after the actual time of baptism. Further, the grace of regeneration may be given to children who are not baptized at all. On these points most traditional Presbyterians agree. However, they are divided over another, related question. What is the spiritual state of baptized children? Assuming that we cannot know certainly the elective decree of God, and we do not know who is actually regenerated and who is not, and we do not believe that baptism infallibly guarantees regeneration to anyone, how are we to regard the baptized children of the church?These questions affect our pastoral practice and the attitudes and actions of parents in our churches. Are the children to be regarded as unsaved, needing conversion, still in the devil's power until we can lead them to a conversion experience? Or, on the other side, are they to be regarded as already regenerated by God, and therefore receptive to the teaching and nurture they receive from their parents and the church? Along the same line, are they members of the church and under its oversight and discipline? Or, are they still outside the church, not subject to its discipline until they join the church by their own profession of faith?It is with these questions that this book provides real help and guidance. Lewis Bevens Schenck (1898-1985) graduated from Princeton Theological Seminary (Th.M.) and from Yale University (Ph.D). For thirty-nine years he served as J. W. Cannon Professor of Bible and Religion at Davidson College in North Carolina. This extensively researched and detailed book is based on his doctoral dissertation at Yale.")
+
+doc = nlp(text)
+
+# Define column headers
+print("{:<25} {:<10} {:<10} {:<10}".format("Entity Text", "Start Char", "End Char", "Label"))
+
+# Iterate over entities and print their text, start character, end character, and label
+for ent in doc.ents:
+    print("{:<30} {:<10} {:<10} {:<10}".format(ent.text, ent.start_char, ent.end_char, ent.label_))
+```
+
+## Syntactic Analysis of Text using spaCy
+```{python}
+text = "While there are many good books that defend the doctrine of infant baptism from the perspective of covenant theology, there are very few that relate the doctrine of infant baptism to the position of baptized children in the church and their relation to the Lord. This particular question is answered in different ways by Presbyterian and other Reformed churches that practice infant baptism and agree on its overall significance. Recently the Federal Vision debate has reopened this discussion. According to the FV, baptism actually regenerates the infant infallibly. The baptized child is not only presumed to be regenerated by his baptism, he actually is regenerated. He has all spiritual graces in Christ (except the grace of perseverance). There is no difference in the spiritual state of a regenerated child who remains faithful and dies in the Lord and a child who later apostatizes and ends in hell. This view of the FV, a virtual denial of the doctrine of Christian perseverance, has provoked reactions in Presbyterian churches. Most react by saying that grace is conveyed only to the elect in baptism, not to all. The time that that grace is conveyed may be before, during, or after the actual time of baptism. Further, the grace of regeneration may be given to children who are not baptized at all. On these points most traditional Presbyterians agree. However, they are divided over another, related question. What is the spiritual state of baptized children? Assuming that we cannot know certainly the elective decree of God, and we do not know who is actually regenerated and who is not, and we do not believe that baptism infallibly guarantees regeneration to anyone, how are we to regard the baptized children of the church?These questions affect our pastoral practice and the attitudes and actions of parents in our churches. Are the children to be regarded as unsaved, needing conversion, still in the devil's power until we can lead them to a conversion experience? Or, on the other side, are they to be regarded as already regenerated by God, and therefore receptive to the teaching and nurture they receive from their parents and the church? Along the same line, are they members of the church and under its oversight and discipline? Or, are they still outside the church, not subject to its discipline until they join the church by their own profession of faith?It is with these questions that this book provides real help and guidance. Lewis Bevens Schenck (1898-1985) graduated from Princeton Theological Seminary (Th.M.) and from Yale University (Ph.D). For thirty-nine years he served as J. W. Cannon Professor of Bible and Religion at Davidson College in North Carolina. This extensively researched and detailed book is based on his doctoral dissertation at Yale."
+doc = nlp(text)
+
+# Define column headers
+print("{:<15} {:<10} {:<15}".format("Token", "Dependency", "Head"))
+
+# Iterate over tokens and print their text, dependency, and head
+for token in doc:
+    print("{:<15} {:<10} {:<15}".format(token.text, token.dep_, token.head.text))
+```
+
+## Token Vector Embedding Analysis with spaCy
+```{python}
+nlp = spacy.load("en_core_web_sm")
+
+tokens = nlp("While there are many good books that defend the doctrine of infant baptism from the perspective of covenant theology, there are very few that relate the doctrine of infant baptism to the position of baptized children in the church and their relation to the Lord. This particular question is answered in different ways by Presbyterian and other Reformed churches that practice infant baptism and agree on its overall significance. Recently the Federal Vision debate has reopened this discussion. According to the FV, baptism actually regenerates the infant infallibly. The baptized child is not only presumed to be regenerated by his baptism, he actually is regenerated. He has all spiritual graces in Christ (except the grace of perseverance). There is no difference in the spiritual state of a regenerated child who remains faithful and dies in the Lord and a child who later apostatizes and ends in hell. This view of the FV, a virtual denial of the doctrine of Christian perseverance, has provoked reactions in Presbyterian churches. Most react by saying that grace is conveyed only to the elect in baptism, not to all. The time that that grace is conveyed may be before, during, or after the actual time of baptism. Further, the grace of regeneration may be given to children who are not baptized at all. On these points most traditional Presbyterians agree. However, they are divided over another, related question. What is the spiritual state of baptized children? Assuming that we cannot know certainly the elective decree of God, and we do not know who is actually regenerated and who is not, and we do not believe that baptism infallibly guarantees regeneration to anyone, how are we to regard the baptized children of the church?These questions affect our pastoral practice and the attitudes and actions of parents in our churches. Are the children to be regarded as unsaved, needing conversion, still in the devil's power until we can lead them to a conversion experience? Or, on the other side, are they to be regarded as already regenerated by God, and therefore receptive to the teaching and nurture they receive from their parents and the church? Along the same line, are they members of the church and under its oversight and discipline? Or, are they still outside the church, not subject to its discipline until they join the church by their own profession of faith?It is with these questions that this book provides real help and guidance. Lewis Bevens Schenck (1898-1985) graduated from Princeton Theological Seminary (Th.M.) and from Yale University (Ph.D). For thirty-nine years he served as J. W. Cannon Professor of Bible and Religion at Davidson College in North Carolina. This extensively researched and detailed book is based on his doctoral dissertation at Yale.")
+
+for token in tokens:
+    has_vector = "True" if token.has_vector else "False"
+    is_oov = "True" if token.is_oov else "False"
+    print("{:<20} {:<15} {:<20} {:<15}".format(token.text, has_vector, token.vector_norm, is_oov))
+```
+
+
+
+## Analyzing the extracted entities.
+```{python}
+import spacy
+import pandas as pd
+#Load the English language model
+nlp = spacy.load("en_core_web_sm")
+
+# Process the text
+text = "While there are many good books that defend the doctrine of infant baptism from the perspective of covenant theology, there are very few that relate the doctrine of infant baptism to the position of baptized children in the church and their relation to the Lord. This particular question is answered in different ways by Presbyterian and other Reformed churches that practice infant baptism and agree on its overall significance. Recently the Federal Vision debate has reopened this discussion. According to the FV, baptism actually regenerates the infant infallibly. The baptized child is not only presumed to be regenerated by his baptism, he actually is regenerated. He has all spiritual graces in Christ (except the grace of perseverance). There is no difference in the spiritual state of a regenerated child who remains faithful and dies in the Lord and a child who later apostatizes and ends in hell. This view of the FV, a virtual denial of the doctrine of Christian perseverance, has provoked reactions in Presbyterian churches. Most react by saying that grace is conveyed only to the elect in baptism, not to all. The time that that grace is conveyed may be before, during, or after the actual time of baptism. Further, the grace of regeneration may be given to children who are not baptized at all. On these points most traditional Presbyterians agree. However, they are divided over another, related question. What is the spiritual state of baptized children? Assuming that we cannot know certainly the elective decree of God, and we do not know who is actually regenerated and who is not, and we do not believe that baptism infallibly guarantees regeneration to anyone, how are we to regard the baptized children of the church?These questions affect our pastoral practice and the attitudes and actions of parents in our churches. Are the children to be regarded as unsaved, needing conversion, still in the devil's power until we can lead them to a conversion experience? Or, on the other side, are they to be regarded as already regenerated by God, and therefore receptive to the teaching and nurture they receive from their parents and the church? Along the same line, are they members of the church and under its oversight and discipline? Or, are they still outside the church, not subject to its discipline until they join the church by their own profession of faith?It is with these questions that this book provides real help and guidance. Lewis Bevens Schenck (1898-1985) graduated from Princeton Theological Seminary (Th.M.) and from Yale University (Ph.D). For thirty-nine years he served as J. W. Cannon Professor of Bible and Religion at Davidson College in North Carolina. This extensively researched and detailed book is based on his doctoral dissertation at Yale."
+doc = nlp(text)
+
+# Extract entities and store them in a list of tuples (entity text, entity type)
+entities = [(ent.text, ent.label_) for ent in doc.ents]
+
+# Convert the list of entities into a DataFrame for analysis
+entities_df = pd.DataFrame(entities, columns=["Entity_Text", "Entity_Type"])
+
+# Display the first few rows of the DataFrame
+print(entities_df.head())
+
+# Perform entity analysis
+# For example, count the occurrences of each entity type
+entity_counts = entities_df["Entity_Type"].value_counts()
+print("\nEntity Type Counts:")
+print(entity_counts)
+```
+
+
+
+```{python}
+import pandas as pd
+# Load the dataset
+df = pd.read_csv("C:\\AA LOLA USW CLASSES\\DATA MINNING AND STATISTICAL MODELLING\\ASSESSMENT\\MS4S09_CW_Book_Reviews.csv")
+df
+```
+
+
+## Document Retrieval with TF-IDF and Cosine Similarity."
+```{python}
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+documents = df.head()["Review_text"]
+
+# User query
+query = "This is the second document."
+
+# Create TF-IDF vectorizer
+vectorizer = TfidfVectorizer()
+
+# Compute TF-IDF vectors for documents and query
+tfidf_matrix = vectorizer.fit_transform(documents)
+query_vector = vectorizer.transform([query])
+
+# Compute cosine similarity between query and documents
+cosine_similarities = cosine_similarity(query_vector, tfidf_matrix)
+
+# Get document indices sorted by similarity
+doc_indices_sorted = cosine_similarities.argsort()[0][::-1]
+
+# Print top k most relevant documents
+k = 2
+for i in range(k):
+    doc_index = doc_indices_sorted[i]
+    print(f"Document {i+1}: {documents[doc_index]}")
+```
+
+
+
+## TF-IDF (Term Frequency-Inverse Document Frequency) and Classification
+```{python}
+# Making a copy of the DataFrame
+df1 = df.copy()
+```
+
+
+## Data Cleaning
+```{python}
+# Drop any rows with missing values
+df1.dropna(inplace=True)
+df1
+```
+
+## CORRELATION MATRIX VISUALISATION
+
+```{python}
+#Correlation matrix Visualisation
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Define the selected features
+selected_features = ["Book_Price", "Time", "Rating", "Found_helpful_ratio"]
+
+# Calculate the correlation matrix for the selected features
+corr_matrix_selected = df1[selected_features].corr()
+
+# Assign variables for plot
+plt.figure(figsize=(10, 8))
+heatmap = sns.heatmap(corr_matrix_selected, annot=True, cmap='coolwarm', fmt=".2f")
+heatmap.set_title('Correlation Matrix Plot for Selected Features')
+plt.show()
+```
+
+
+## Sample Selection
+```{python}
+# Count the occurrences of each genre
+genre_counts = df1['Genre'].value_counts()
+
+# Select the top 5 genres
+top_genres = genre_counts.head(5).index
+
+# Filter the DataFrame to include only rows with these top genres
+df1_filtered = df1[df1['Genre'].isin(top_genres)]
+
+# Print summary statistics of the filtered DataFrame
+print(df1_filtered.describe())
+
+# Display the first few rows of the filtered DataFrame
+print(df1_filtered.head)
+```
+## TF-IDF (Term Frequency-Inverse Document Frequency) 
+```{python}
+#TF-IDF (Term Frequency-Inverse Document Frequency) vectorization on the review text data
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+reviews = df1_filtered['Review_text']
+
+# Initialize the TF-IDF vectorizer
+tfidf_vectorizer = TfidfVectorizer()
+
+# Fit and transform the review text data
+X = tfidf_vectorizer.fit_transform(reviews)
+
+# Print the shape of the resulting feature matrix
+print("Shape of feature matrix:", X.shape)
+```
+
+
+## Decision Tree Classification
+```{python}
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import f1_score
+```
+
+
+
+```{python}
+# Create a copy of the df1_filtered
+df1_filtered_copy = df1_filtered.copy()
+
+# Drop the "Review_text" and "Review_title" columns from the copied DataFrame
+df1_filtered_copy.drop(columns=['Review_text', 'Review_title', 'Reviewer_id', 'Publisher', 'Title', 'First_author'], inplace=True)
+df1_filtered_copy
+```
+
+
+## Features selection
+```{python}
+# Select features variable
+X = df1_filtered_copy.drop(columns=['Genre'])
+X
+```
+
+```{python}
+# Select target variable
+y = df1_filtered_copy['Genre']
+y
+```
+
+## splitting data
+```{python}
+# Split data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+```
+
+
+## Decision Tree Classification
+```{python}
+# Initialize Decision Tree classifier
+clf = DecisionTreeClassifier(max_depth=2)
+clf = DecisionTreeClassifier()
+
+# Train the classifier
+clf.fit(X_train, y_train)
+
+# Make predictions
+y_pred = clf.predict(X_test)
+
+# Evaluate the model
+accuracy = accuracy_score(y_test, y_pred)
+
+print("Accuracy:", accuracy)
+```
+
+
+
+# DISCUSSION OF FUTURE WORK
+
+Enhanced NLP Techniques: Further exploration of advanced NLP techniques such as deep learning models like BERT, GPT can be undertaken to improve the accuracy and effectiveness of text analysis tasks.
+
+Advanced Information Retrieval Methods: Focusing on developing more sophisticated information retrieval methods that leverage entity recognition, and context-aware retrieval techniques. These methods can improve the relevance and accuracy of search results by considering the semantic meaning and context of queries and documents.
+
+Refinement of TF-IDF Approaches: Exploring variations of TF-IDF, such as sublinear TF scaling or term weighting schemes like BM25, to better capture the importance of terms in documents and improve the performance of text mining tasks.
+
+Advanced Decision Tree Models: The decision tree classifier achieved an accuracy of approximately 60%, indicating moderate performance. The future work which can be focused on is experimenting with more advanced decision tree variants such as Random Forests, Gradient Boosted Trees, these offers improved predictive performance by combining multiple decision trees and addressing over-fitting.
+
+
+
+# REFERENCES
+
+1) https://spacy.io/usage/spacy-101#training
+2) https://www.kaggle.com/code/ganeshn88/faster-nlp-with-spacy-in-python
+3) Johannesson MP (2018b). stmprinter: Print Multiple STM Models To A File For Inspection.
+R package version 0.0.0.9000.
+4) Blei DM, Lafferty JD (2007). “A correlated topic model of Science.” The Annals of Applied
+Statistics, 1(1), 17–35. doi:10.1214/07-AOAS114. URL http://dx.doi.org/10.1214/
+07-AOAS114.
+5) https://github.com/rshinde03/Natural-Language-Processing/blob/main/NER%20%26%20De-Identification%20Using%20SPACY.ipynb
+
+
